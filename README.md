@@ -15,8 +15,10 @@ Get the correct SDK for your target, and clone this repo into the `package` subd
 Install `sway` and `ragel` on your host system, then from the main SDK directory run:
 
 ```
-./scripts/feeds update -a && ./scripts/feeds install -a
-make package/dsmr2mqtt/compile
+./scripts/feeds update -a && ./scripts/feeds install libmosquitto
+make defconfig
+make menuconfig -> uncheck the first 3 options under Global build settings
+make -j$(nproc) package/dsmr2mqtt/{download,prepare,compile} V=s
 ```
 
 ## Using the tool
