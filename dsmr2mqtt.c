@@ -175,7 +175,7 @@ int send_values(struct dsmr_data_struct *data) {
   struct tm *current_time;
   
   last_time = localtime( &last_timestamp );
-  current_time = localtime( &data->timestamp );
+  current_time = localtime( (time_t *)&(data->timestamp) );
 
   if (last_time->tm_yday != current_time->tm_yday) {
     last_timestamp = data->timestamp;
