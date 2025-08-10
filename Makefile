@@ -6,7 +6,7 @@ PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/Toesoe/dsmr2mqtt.git
-PKG_SOURCE_VERSION:=6d4f550cd883f9f652d96e4d73d20c5aaa988b0d
+PKG_SOURCE_VERSION:=HEAD
 PKG_MIRROR_HASH:=skip
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
@@ -24,6 +24,17 @@ define Package/dsmr2mqtt/description
  Connect a DSMR smart meter to the USB of your
  OpenWrt device and to a MQTT broker to pass
  on all the telegrams.
+endef
+
+define Build/Compile
+	ragel -o $(PKG_BUILD_DIR)/dsmr-p1-parser/p1-parser.c $(PKG_BUILD_DIR)/dsmr-p1-parser/p1-parser.rl
+	$(TARGET_CC) $(TARGET_CFLAGS) \
+		-o $(PKG_BUILD_DIR)/dsmr2mqtt \
+		$(PKG_BUILD_DIR)/dsmr2mqtt.c \
+		$(PKG_BUILD_DIR)/dsmr-p1-parser/p1-parser.c \
+		$(PKG_BUILD_DIR)/dsmr-p1-parser/p1-lib.c \
+		$(PKG_BUILD_DIR)/dsmr-p1-parser/crc16.c \
+		$(TARGET_LDFLAGS) -lmosquitto
 endef
 
 define Package/dsmr2mqtt/install
