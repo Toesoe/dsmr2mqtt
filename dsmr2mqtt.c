@@ -261,7 +261,7 @@ int send_values(struct dsmr_data_struct *data) {
 int main(int argc, char **argv) {
   signal(SIGINT, intHandler);
   
-  init_msglogger();
+  // init_msglogger();
   // logger.loglevel = LL_VERBOSE;
 
   // set defaults in config
