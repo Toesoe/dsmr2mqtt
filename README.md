@@ -17,8 +17,8 @@ Install `sway` and `ragel` on your host system, then from the main SDK directory
 ```
 ./scripts/feeds update -a && ./scripts/feeds install libmosquitto
 make defconfig
-make menuconfig -> uncheck the first 3 options under Global build settings
-make -j$(nproc) package/dsmr2mqtt/{download,prepare,compile} V=s
+make menuconfig -> uncheck the first 3 options under Global build settings + Image configuration
+make -j$(nproc) package/dsmr2mqtt/compile V=s
 ```
 
 ## Using the tool
