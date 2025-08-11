@@ -42,16 +42,20 @@
 #define DSMR_V_SAGS_L3     "dsmr/meter-stats/voltage_sag_count_l3"
 #define DSMR_V_SWELLS_L1   "dsmr/meter-stats/voltage_swell_count_l1"
 #define DSMR_V_SWELLS_L2   "dsmr/meter-stats/voltage_swell_count_l2"
-#define DSMR_V_SWELLS_L3   "dsmr/meter-stats/voltage_swell_count_l3"
-
+#define DSMR_V_SWELLS_L3           "dsmr/meter-stats/voltage_swell_count_l3"
 
 /* config struct */
-struct dsmr2mqtt_config {
-  char *serial_device;
-  char *mqtt_broker_host;
-  int mqtt_broker_port;
+struct dsmr2mqtt_config
+{
+    char *serial_device;
+    char *mqtt_broker_host;
+    int   mqtt_broker_port;
+    char *mqtt_broker_user;
+    char *mqtt_broker_pass;
+
+    bool  readGasMeter;
 };
-struct dsmr2mqtt_config config;
+struct dsmr2mqtt_config config = { 0 };
 
 /* Mosquitto */
 struct mosquitto *mosq = NULL;
@@ -72,44 +76,61 @@ void intHandler(int dummy) {
 }
 
 /* Help and arguments */
-void show_help() {
-  fprintf(stderr, "dsmr2mqtt, version %s-%s\n", VERSION, GIT_VERSION);
-  fprintf(stderr, "Usage:  dsmr2mqtt [-d <serial_device>] [-m "
-                  "<mqtt_broker_host>] [-p <mqtt_broker_port>]\n");
-  fprintf(stderr, "    -d <serial_device>      Serial device for DSMR device "
-                  "(default is /dev/ttyUSB0)\n");
-  fprintf(stderr, "    -m <mqtt_broker_host>   Host name for MQTT broker "
-                  "(default is localhost)\n");
-  fprintf(stderr, "    -p <mqtt_broker_port>   Host name for MQTT broker port "
-                  "(default is 1883)\n");
+void show_help()
+{
+    fprintf(stderr, "dsmr2mqtt, version %s-%s\n", VERSION, GIT_VERSION);
+    fprintf(stderr,
+            "Usage:  dsmr2mqtt [-d <serial_device>] [-m "
+            "<mqtt_broker_host>] [-p <mqtt_broker_port>] [-u <mqtt_broker_username> [-P <mqtt_broker_password>]\n");
+    fprintf(stderr, "    -d <serial_device>        Serial device for DSMR device "
+                    "(default is /dev/ttyUSB0)\n");
+    fprintf(stderr, "    -m <mqtt_broker_host>     Host name for MQTT broker "
+                    "(default is localhost)\n");
+    fprintf(stderr, "    -u <mqtt_broker_username> MQTT user\n");
+    fprintf(stderr, "    -P <mqtt_broker_password> Password for MQTT user\n");
+    fprintf(stderr, "    -g                        Enable gas meter readout\n");
 }
 
-int parse_arguments(int argc, char **argv) {
-  int c;
-  int digit_optind = 0;
-  int aopt = 0, bopt = 0;
-  char *copt = 0, *dopt = 0;
-  while ((c = getopt(argc, argv, "hd:m:p:")) != -1) {
-    int this_option_optind = optind ? optind : 1;
-    switch (c) {
-    case 'h':
-      show_help();
-      exit(0);
-      break;
-    case 'd':
-      config.serial_device = optarg;
-      break;
-    case 'm':
-      config.mqtt_broker_host = optarg;
-      break;
-    case 'p':
-      config.mqtt_broker_port = strtoul(optarg, NULL, 10);
-      break;
-    default:
-      show_help;
+int parse_arguments(int argc, char **argv)
+{
+    int   c;
+    int   digit_optind = 0;
+    int   aopt = 0, bopt = 0;
+    char *copt = 0, *dopt = 0;
+    while ((c = getopt(argc, argv, "hd:m:p:u:P:ng")) != -1)
+    {
+        int this_option_optind = optind ? optind : 1;
+        switch (c)
+        {
+            case 'h':
+                show_help();
+                exit(0);
+                break;
+            case 'd':
+                config.serial_device = optarg;
+                break;
+            case 'm':
+                config.mqtt_broker_host = optarg;
+                break;
+            case 'p':
+                config.mqtt_broker_port = strtoul(optarg, NULL, 10);
+                break;
+            case 'u':
+                config.mqtt_broker_user = optarg;
+                break;
+            case 'P':
+                config.mqtt_broker_pass = optarg;
+                break;
+            case 'g':
+                config.readGasMeter = true;
+                break;
+
+            default:
+                show_help();
+                break;
+        }
     }
-  }
-  return 0;
+    return 0;
 }
 
 void mosq_log_callback(struct mosquitto *mosq, void *userdata, int level,
@@ -130,132 +151,142 @@ void mosq_log_callback(struct mosquitto *mosq, void *userdata, int level,
 void mosq_publish_callback(struct mosquitto *mosq, void *userdata, int level) {}
 
 /* Setup MQTT connection to broker */
-int mqtt_setup(char *host, int port) {
+int mqtt_setup(char *host, int port)
+{
+    int  keepalive     = 60;
+    bool clean_session = true;
 
-  int keepalive = 60;
-  bool clean_session = true;
+    mosquitto_lib_init();
+    mosq = mosquitto_new(NULL, clean_session, NULL);
+    if (!mosq)
+    {
+        fprintf(stderr, "Error: Out of memory.\n");
+        return -1;
+    }
 
-  mosquitto_lib_init();
-  mosq = mosquitto_new(NULL, clean_session, NULL);
-  if (!mosq) {
-    fprintf(stderr, "Error: Out of memory.\n");
-    return -1;
-  }
+    mosquitto_log_callback_set(mosq, mosq_log_callback);
+    // mosquitto_publish_callback_set(mosq, mosq_publish_callback);
 
-  mosquitto_log_callback_set(mosq, mosq_log_callback);
-  // mosquitto_publish_callback_set(mosq, mosq_publish_callback);
+    if (config.mqtt_broker_user != NULL)
+    {
+        mosquitto_username_pw_set(mosq, config.mqtt_broker_user, config.mqtt_broker_pass); // PASS can be null
+    }
 
-  if (mosquitto_connect(mosq, host, port, keepalive)) {
-    fprintf(stderr, "Unable to connect to MQTT broker on %s:%i.\n", host, port);
-    return -2;
-  }
+    if (mosquitto_connect(mosq, host, port, keepalive))
+    {
+        fprintf(stderr, "Unable to connect to MQTT broker on %s:%i.\n", host, port);
+        return -2;
+    }
 
-  int loop = mosquitto_loop_start(mosq);
-  if (loop != MOSQ_ERR_SUCCESS) {
-    fprintf(stderr, "Unable to start loop: %i\n", loop);
-    return -3;
-  }
+    int loop = mosquitto_loop_start(mosq);
+    if (loop != MOSQ_ERR_SUCCESS)
+    {
+        fprintf(stderr, "Unable to start loop: %i\n", loop);
+        return -3;
+    }
 
-  fprintf(stderr, "Connected to MQTT broker on %s:%i...\n", host, port);
-  return 0;
+    fprintf(stderr, "Connected to MQTT broker on %s:%i...\n", host, port);
+    return 0;
 }
 
 int mqtt_send(char *topic, char *msg, bool retain) {
   return mosquitto_publish(mosq, NULL, topic, strlen(msg), msg, 0, retain);
 }
 
-int send_values(struct dsmr_data_struct *data) {
+int send_values(struct dsmr_data_struct *data)
+{
+    char *msg = malloc(64);
 
-  char *msg = malloc(64);
-  
-  /* Calculate total energy consumption for today */
-  double e_in_today;
-  double e_out_today;
-  struct tm *last_time;
-  struct tm *current_time;
-  
-  last_time = localtime( &last_timestamp );
-  current_time = localtime( (time_t *)&(data->timestamp) );
+    /* Calculate total energy consumption for today */
+    double     e_in_today;
+    double     e_out_today;
+    struct tm *last_time;
+    struct tm *current_time;
 
-  if (last_time->tm_yday != current_time->tm_yday) {
-    last_timestamp = data->timestamp;
-    e_in_midnight = (data->E_in[1] + data->E_in[2]);
-    e_out_midnight = (data->E_out[1] + data->E_out[2]);
-  }
-  
-  // Only calculate if we have the meter readings from midnight
-  if (e_in_midnight != 0 || e_out_midnight != 0) {
-    e_in_today = (data->E_in[1] + data->E_in[2]) - e_in_midnight;
-    e_out_today = (data->E_out[1] + data->E_out[2]) - e_out_midnight;
+    last_time    = localtime(&last_timestamp);
+    current_time = localtime((time_t *)&(data->timestamp));
 
-    /* in kWh */
-    sprintf(msg, "%.3f", e_in_today);
-    mqtt_send(DSMR_E_IN_TODAY, msg, 0);
-    sprintf(msg, "%.3f", e_out_today);
-    mqtt_send(DSMR_E_OUT_TODAY, msg, 0);
-  }
+    if (last_time->tm_yday != current_time->tm_yday)
+    {
+        last_timestamp = data->timestamp;
+        e_in_midnight  = (data->E_in[1] + data->E_in[2]);
+        e_out_midnight = (data->E_out[1] + data->E_out[2]);
+    }
 
-  /* Current timestamp */
-  sprintf(msg, "%i", data->timestamp);
-  mqtt_send(DSMR_TIMESTAMP, msg, 0);
+    // Only calculate if we have the meter readings from midnight
+    if (e_in_midnight != 0 || e_out_midnight != 0)
+    {
+        e_in_today  = (data->E_in[1] + data->E_in[2]) - e_in_midnight;
+        e_out_today = (data->E_out[1] + data->E_out[2]) - e_out_midnight;
 
-  /* Current electricity delivered in Watts */
-  sprintf(msg, "%.0f", data->P_in_total * 1000);
-  mqtt_send(DSMR_P_IN_TOTAL, msg, 0);
+        /* in kWh */
+        sprintf(msg, "%.3f", e_in_today);
+        mqtt_send(DSMR_E_IN_TODAY, msg, 0);
+        sprintf(msg, "%.3f", e_out_today);
+        mqtt_send(DSMR_E_OUT_TODAY, msg, 0);
+    }
 
-  /* Current electricity returned in Watts */
-  sprintf(msg, "%.0f", data->P_out_total * 1000);
-  mqtt_send(DSMR_P_OUT_TOTAL, msg, 0);
+    /* Current timestamp */
+    sprintf(msg, "%i", data->timestamp);
+    mqtt_send(DSMR_TIMESTAMP, msg, 0);
 
-  /*  in Watts */
-  sprintf(msg, "%.0f", data->P_in[0] * 1000);
-  mqtt_send(DSMR_P_IN_L1, msg, 0);
+    /* Current electricity delivered in Watts */
+    sprintf(msg, "%.0f", data->P_in_total * 1000);
+    mqtt_send(DSMR_P_IN_TOTAL, msg, 0);
 
-  /*  in Watts */
-  sprintf(msg, "%.0f", data->P_in[1] * 1000);
-  mqtt_send(DSMR_P_IN_L2, msg, 0);
-  
-  /*  in Watts */
-  sprintf(msg, "%.0f", data->P_in[2] * 1000);
-  mqtt_send(DSMR_P_IN_L3, msg, 0);
+    /* Current electricity returned in Watts */
+    sprintf(msg, "%.0f", data->P_out_total * 1000);
+    mqtt_send(DSMR_P_OUT_TOTAL, msg, 0);
 
+    /*  in Watts */
+    sprintf(msg, "%.0f", data->P_in[0] * 1000);
+    mqtt_send(DSMR_P_IN_L1, msg, 0);
 
-  /*  in kWh */
-  sprintf(msg, "%.3f", data->E_in[1]);
-  mqtt_send(DSMR_E_IN_TARIFF1, msg, 0);
+    /*  in Watts */
+    sprintf(msg, "%.0f", data->P_in[1] * 1000);
+    mqtt_send(DSMR_P_IN_L2, msg, 0);
 
-  /*  in kWh */
-  sprintf(msg, "%.3f", data->E_in[2]);
-  mqtt_send(DSMR_E_IN_TARIFF2, msg, 0);
+    /*  in Watts */
+    sprintf(msg, "%.0f", data->P_in[2] * 1000);
+    mqtt_send(DSMR_P_IN_L3, msg, 0);
 
-  /*  in kWh */
-  sprintf(msg, "%.3f", data->E_out[1]);
-  mqtt_send(DSMR_E_OUT_TARIFF1, msg, 0);
+    /*  in kWh */
+    sprintf(msg, "%.3f", data->E_in[1]);
+    mqtt_send(DSMR_E_IN_TARIFF1, msg, 0);
 
-  /*  in kWh */
-  sprintf(msg, "%.3f", data->E_out[2]);
-  mqtt_send(DSMR_E_OUT_TARIFF2, msg, 0);
-  
+    /*  in kWh */
+    sprintf(msg, "%.3f", data->E_in[2]);
+    mqtt_send(DSMR_E_IN_TARIFF2, msg, 0);
 
-  // Gas values (with retain)
-  if (last_gas_timestamp != data->dev_counter_timestamp[0]) {
-    sprintf(msg, "%i", data->dev_counter_timestamp[0]);
-    mqtt_send(DSMR_DEV_COUNTER_TIMESTAMP, msg, 1);
-    
-    sprintf(msg, "%.3f", data->dev_counter[0]);
-    mqtt_send(DSMR_DEV_COUNTER, msg, 1);
-    
-    // Debiet is ((now gas - previous gas) * 60*60 (sec/hour) / (now timestamp - last timestamp))
-    double debiet = (((data->dev_counter[0] - last_gas_count) * 60*60) / (data->dev_counter_timestamp[0] - last_gas_timestamp));
-    sprintf(msg, "%.3f", debiet);
-    mqtt_send(DSMR_DEV_COUNTER_RATE, msg, 1);
-    
-    last_gas_count     = data->dev_counter[0];
-    last_gas_timestamp = data->dev_counter_timestamp[0];
-  }
-  
-  free(msg);
-  return 0;
+    /*  in kWh */
+    sprintf(msg, "%.3f", data->E_out[1]);
+    mqtt_send(DSMR_E_OUT_TARIFF1, msg, 0);
+
+    /*  in kWh */
+    sprintf(msg, "%.3f", data->E_out[2]);
+    mqtt_send(DSMR_E_OUT_TARIFF2, msg, 0);
+
+    // Gas values (with retain)
+    if (config.readGasMeter && (last_gas_timestamp != data->dev_counter_timestamp[0]))
+    {
+        sprintf(msg, "%i", data->dev_counter_timestamp[0]);
+        mqtt_send(DSMR_DEV_COUNTER_TIMESTAMP, msg, 1);
+
+        sprintf(msg, "%.3f", data->dev_counter[0]);
+        mqtt_send(DSMR_DEV_COUNTER, msg, 1);
+
+        // Debiet is ((now gas - previous gas) * 60*60 (sec/hour) / (now timestamp - last timestamp))
+        double debiet =
+        (((data->dev_counter[0] - last_gas_count) * 60 * 60) / (data->dev_counter_timestamp[0] - last_gas_timestamp));
+        sprintf(msg, "%.3f", debiet);
+        mqtt_send(DSMR_DEV_COUNTER_RATE, msg, 1);
+
+        last_gas_count     = data->dev_counter[0];
+        last_gas_timestamp = data->dev_counter_timestamp[0];
+    }
+
+    free(msg);
+    return 0;
 }
 
 int main(int argc, char **argv) {
